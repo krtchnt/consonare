@@ -53,6 +53,7 @@
     rust = {
       enable = true;
       channel = "stable";
+      mold.enable = true;
     };
   };
 }

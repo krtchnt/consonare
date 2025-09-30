@@ -1,14 +1,7 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub mod dissonance;
+pub mod f0;
+pub mod input;
+pub mod intervals;
+pub mod partials;
+pub mod preprocess;
+pub mod weighting;
