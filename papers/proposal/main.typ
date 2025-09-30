@@ -114,7 +114,7 @@ The limitations of this project are the utilisation of concepts from
 psychoacoustics, which has more than one competing theories and some are more
 accepted than others; The equal loudness contour and the graph of pure
 sinusoidal waves dissonance for instance are both based on human hearing, which
-is inherently imprecise and nonrigorous .
+is inherently imprecise and nonrigorous.
 
 = Methods <sec:methods>
 

@@ -1,6 +1,4 @@
-[package]
-name = "consonare"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "3"
+members = ["consonare-cli","consonare-core"]
 
-[dependencies]
