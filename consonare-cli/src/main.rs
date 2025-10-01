@@ -8,6 +8,9 @@ use consonare_core::{
     weighting::{WeightingConfig, run_weighting_step},
 };
 
+#[cfg(feature = "visualise")]
+mod visualise;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ---- Step #1: steady-pitch preprocessing & checks ----
     let cfg = Config::default(); // tweak thresholds/window/hop here if needed
@@ -228,6 +231,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "D(r) stats (smoothed): min={:.6}  med={:.6}  max={:.6}",
             dmin, dmed, dmax
         );
+
+        #[cfg(feature = "visualise")]
+        {
+            if let Err(e) = visualise::plot_dissonance(&d_result) {
+                eprintln!("Plotting failed: {e}");
+            } else {
+                println!("Saved dissonance profile plot as dissonance.png");
+            }
+        }
     }
 
     // ---- Step #8: interval selection & naming near D(r) minima ----

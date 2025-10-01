@@ -10,7 +10,7 @@
 
   # https://devenv.sh/packages/
   # packages = [ pkgs.git ];
-  packages = with pkgs; [codespell typstyle];
+  packages = with pkgs; [codespell fontconfig typstyle];
 
   # https://devenv.sh/languages/
   # languages.rust.enable = true;

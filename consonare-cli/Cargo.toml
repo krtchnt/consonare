@@ -5,3 +5,7 @@ edition = "2024"
 
 [dependencies]
 consonare-core = { version = "0.1.0", path = "../consonare-core" }
+plotters = { version = "0.3.7", optional = true }
+
+[features]
+visualise = ["dep:plotters"]
