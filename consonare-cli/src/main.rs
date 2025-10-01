@@ -1,3 +1,6 @@
+use clap::{ArgAction, Parser, ValueEnum};
+use std::path::{Path, PathBuf};
+
 use consonare_core::{
     diagnostics::{QualityConfig, run_quality_step},
     dissonance::{DissonanceConfig, run_dissonance_step},
@@ -23,39 +26,114 @@ mod heatmap;
 #[cfg(feature = "visualise")]
 mod plot;
 
+/// Print only when `verbose` is true.
+macro_rules! vprintln {
+    ($v:expr, $($arg:tt)*) => {
+        if $v { println!($($arg)*); }
+    };
+}
+
+/// CLI for consonare analysis.
+#[derive(Parser, Debug)]
+#[command(
+    name = "consonare-cli",
+    about = "Analyze a sustained note from an audio file (F0, partials, dissonance, intervals) and print musician-facing guidance.",
+    version
+)]
+struct Args {
+    /// Path to the audio file (e.g., samples/upright-piano_e4.wav)
+    #[arg(value_name = "FILE_PATH")]
+    file_path: PathBuf,
+
+    /// Increase verbosity (show diagnostics for Steps 1–10). `-v` or `--verbose`.
+    #[arg(short, long, action = ArgAction::Count)]
+    verbose: u8,
+
+    /// Output directory for CSV exports.
+    #[arg(long, value_name = "DIR", default_value = ".")]
+    out_dir: PathBuf,
+
+    /// Which CSVs to export.
+    #[arg(long, value_enum, default_value_t = Export::All)]
+    export: Export,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum Export {
+    None,
+    Dissonance,
+    Overtones,
+    All,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let fname = "keyboards_upright-piano_e4.wav";
+    // ---- CLI ----
+    let args = Args::parse();
+    let verbose = args.verbose > 0;
+    let audio_path: &Path = &args.file_path;
+    let display_name = audio_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("audio");
+    let out_dir = args.out_dir;
+
+    // Use file stem for output file prefixes (nicer than including .wav in the name).
+    let out_prefix = audio_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
 
     // ---- Step #1: steady-pitch preprocessing & checks ----
     let cfg = Config::default(); // tweak thresholds/window/hop here if needed
-    let result = process_file(format!("samples/{fname}"), &cfg)?;
+    let result = process_file(audio_path.to_string_lossy().to_string(), &cfg)?;
 
-    println!("== Step 1 ==");
-    println!("Sample rate: {} Hz", result.analysis.sample_rate);
-    println!(
+    vprintln!(verbose, "== Step 1 ==");
+    vprintln!(verbose, "Sample rate: {} Hz", result.analysis.sample_rate);
+    vprintln!(
+        verbose,
         "Trimmed {} -> {} samples",
-        result.analysis.original_samples, result.analysis.trimmed_samples
+        result.analysis.original_samples,
+        result.analysis.trimmed_samples
     );
-    println!("Applied gain: {:.2} dB", result.analysis.applied_gain_db);
+    vprintln!(
+        verbose,
+        "Applied gain: {:.2} dB",
+        result.analysis.applied_gain_db
+    );
 
     if let (Some(med), Some(max_dev)) = (
         result.analysis.median_f0_hz,
         result.analysis.max_abs_dev_cents,
     ) {
-        println!(
+        vprintln!(
+            verbose,
             "Median f0: {:.2} Hz, Max deviation: {:.1} cents",
-            med, max_dev
+            med,
+            max_dev
         );
-        println!("Steady pitch? {}", result.analysis.steady_pitch);
+        vprintln!(verbose, "Steady pitch? {}", result.analysis.steady_pitch);
+        if !verbose {
+            println!(
+                "Loaded `{}` • median f0 ≈ {:.2} Hz • steady_pitch={}",
+                display_name, med, result.analysis.steady_pitch
+            );
+        }
     } else {
-        println!(
+        vprintln!(
+            verbose,
             "No reliable f0 detected; steady pitch? {}",
             result.analysis.steady_pitch
         );
+        if !verbose {
+            println!(
+                "Loaded `{}` • f0 not reliable • steady_pitch={}",
+                display_name, result.analysis.steady_pitch
+            );
+        }
     }
 
     if result.samples.is_empty() {
-        eprintln!("No samples remaining after trim; skipping Step #2.");
+        eprintln!("No samples remaining after trim; aborting.");
         return Ok(());
     }
 
@@ -64,23 +142,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let spec_cfg = SpectralConfig {
         ..Default::default()
     };
-
     let spec = run_spectral_step(&result.samples, sr, &spec_cfg)?;
 
-    println!("\n== Step 2 ==");
-    println!(
+    vprintln!(verbose, "\n== Step 2 ==");
+    vprintln!(
+        verbose,
         "Frames: {} | Bins: {}",
         spec.times_s.len(),
         spec.freqs_hz.len()
     );
     if let (Some(t0), Some(t1)) = (spec.times_s.first(), spec.times_s.last()) {
-        println!("Time span: {:.3} … {:.3} s", t0, t1);
+        vprintln!(verbose, "Time span: {:.3} … {:.3} s", t0, t1);
     }
     if let (Some(f0), Some(f1)) = (spec.freqs_hz.first(), spec.freqs_hz.last()) {
-        println!("Freq span: {:.1} … {:.1} Hz", f0, f1);
+        vprintln!(verbose, "Freq span: {:.1} … {:.1} Hz", f0, f1);
     }
 
-    // Suppression stats: how much of the spectrogram is considered sub-floor
+    // Suppression stats
     let (mut suppressed, mut total) = (0usize, 0usize);
     for row in &spec.suppressed {
         total += row.len();
@@ -88,76 +166,89 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if total > 0 {
         let pct = 100.0 * suppressed as f64 / total as f64;
-        println!("Suppressed bins: {suppressed}/{total} ({pct:.1}%)");
+        vprintln!(verbose, "Suppressed bins: {suppressed}/{total} ({pct:.1}%)");
     }
 
     // Noise-floor summary (dB)
     let (min_floor, med_floor, max_floor) = summary_min_median_max(&spec.floor_db);
-    println!(
+    vprintln!(
+        verbose,
         "Noise floor (dB): min/median/max = {:.1} / {:.1} / {:.1}",
-        min_floor, med_floor, max_floor
+        min_floor,
+        med_floor,
+        max_floor
     );
 
-    // Example: peek at a couple of frame values (smoothed dB after median)
+    // Example frames
     for &probe_idx in &[0usize, spec.mag_db.len().saturating_sub(1)] {
         if let Some(row) = spec.mag_db.get(probe_idx) {
             let (min_db, med_db, max_db) = summary_min_median_max(row);
-            println!(
+            vprintln!(
+                verbose,
                 "Frame {probe_idx}: smoothed dB min/median/max = {:.1} / {:.1} / {:.1}",
-                min_db, med_db, max_db
+                min_db,
+                med_db,
+                max_db
             );
         }
     }
 
-    // ---- Step #3: fundamental estimation (YIN + cepstral + harmonic consensus) ----
+    // ---- Step #3: fundamental estimation ----
     let f0_cfg = F0Config {
         ..Default::default()
     };
-
     let f0 = run_f0_step(&result.samples, sr, Some(&spec), &f0_cfg)?;
 
-    println!("\n== Step 3 ==");
-    println!("Analyzed {} frames", f0.frames.len());
+    vprintln!(verbose, "\n== Step 3 ==");
+    vprintln!(verbose, "Analyzed {} frames", f0.frames.len());
     if let Some(hz) = f0.consensus_f0_hz {
-        println!("Consensus f0: {:.3} Hz", hz);
-        println!("Confidence: {:.2}", f0.consensus_confidence);
+        vprintln!(verbose, "Consensus f0: {:.3} Hz", hz);
+        vprintln!(verbose, "Confidence: {:.2}", f0.consensus_confidence);
+        if !verbose {
+            println!("f0 ≈ {:.3} Hz (conf {:.2})", hz, f0.consensus_confidence);
+        }
     } else {
-        println!("Consensus f0: (none)");
+        vprintln!(verbose, "Consensus f0: (none)");
+        if !verbose {
+            println!("f0: (none)");
+        }
     }
     if let (Some(first), Some(last)) = (f0.frames.first(), f0.frames.last()) {
-        println!(
+        vprintln!(
+            verbose,
             "First frame: yin={:.3?} Hz, cep={:.3?} Hz, fused={:.3?} Hz, agree={:.2}",
-            first.yin_hz, first.cep_hz, first.fused_hz, first.agreement
+            first.yin_hz,
+            first.cep_hz,
+            first.fused_hz,
+            first.agreement
         );
-        println!(
+        vprintln!(
+            verbose,
             "Last frame:  yin={:.3?} Hz, cep={:.3?} Hz, fused={:.3?} Hz, agree={:.2}",
-            last.yin_hz, last.cep_hz, last.fused_hz, last.agreement
+            last.yin_hz,
+            last.cep_hz,
+            last.fused_hz,
+            last.agreement
         );
     }
 
-    // ---- Step #4: partial extraction (peaks -> tracks -> medians) ----
+    // ---- Step #4: partial extraction ----
     let p_cfg = PartialsConfig {
-        // You can tweak these to be stricter/looser:
-        // max_partials: 20,
-        // min_snr_db: 15.0,
-        // local_max_half_width: 1,
-        // track_max_jump_cents: 35.0,
-        // min_track_len: 3,
         ..Default::default()
     };
-
     let consensus_f0_hz_f32 = f0.consensus_f0_hz;
     let parts = run_partials_step(&spec, consensus_f0_hz_f32, &p_cfg)?;
 
-    println!("\n== Step 4 ==");
-    println!("Tracks formed: {}", parts.tracks.len());
-    println!(
+    vprintln!(verbose, "\n== Step 4 ==");
+    vprintln!(verbose, "Tracks formed: {}", parts.tracks.len());
+    vprintln!(
+        verbose,
         "Reported summaries (len >= {}): {}",
         p_cfg.min_track_len,
         parts.summaries.len()
     );
 
-    // Print a concise table of top partials (by frequency)
+    // Concise table of top partials (by frequency)
     let mut shown = 0usize;
     for s in &parts.summaries {
         let harm = if let Some(f0hz) = consensus_f0_hz_f32 {
@@ -169,8 +260,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             0
         };
-
-        println!(
+        vprintln!(
+            verbose,
             "k={:<2}  f≈{:>9.3} Hz  level≈{:>6.1} dB  SNR≈{:>5.1} dB  n={:<3}{}",
             s.track_id,
             s.median_hz,
@@ -183,67 +274,67 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 String::new()
             }
         );
-
         shown += 1;
         if shown >= 12 {
             break;
         }
     }
 
-    // ---- Step #5: inharmonicity modelling (optional) ----
-    //
-    // Fit the stiff-string coefficient B from partials (if applicable) using
-    // the linearized model r_n^2 = a + b n^2 with r_n = f_n / (n * f0_hat).
-    // Accept only if the fit quality is good; otherwise skip.
+    // ---- Step #5: inharmonicity modelling ----
     let ih_cfg = InharmonicityConfig {
         ..Default::default()
     };
     let f0_hat_opt = f0.consensus_f0_hz;
     let ih = run_inharmonicity_step(&parts, f0_hat_opt, &ih_cfg);
 
-    println!("\n== Step 5 ==");
+    vprintln!(verbose, "\n== Step 5 ==");
     if ih.b.is_none() {
         if let Some(f0h) = f0_hat_opt {
-            println!(
+            vprintln!(
+                verbose,
                 "No reliable stiff-string fit (used {} points, R^2={:.3}). Keeping empirical partials. f0≈{:.2} Hz",
-                ih.used_points, ih.r2, f0h
+                ih.used_points,
+                ih.r2,
+                f0h
             );
         } else {
-            println!("No f0 available → cannot attempt inharmonicity fit.");
+            vprintln!(
+                verbose,
+                "No f0 available → cannot attempt inharmonicity fit."
+            );
         }
     } else {
         let b_est = ih.b.unwrap();
-        println!(
+        vprintln!(
+            verbose,
             "Accepted stiff-string model: B ≈ {:.6e}, R^2={:.3}, points={}",
-            b_est, ih.r2, ih.used_points
+            b_est,
+            ih.r2,
+            ih.used_points
         );
-        println!(
+        vprintln!(
+            verbose,
             "Refined f0 ≈ {:.2} Hz (median abs error ≈ {:.2} cents)",
             ih.f0_refined_hz,
             ih.median_abs_cents.unwrap_or(0.0)
         );
     }
 
-    // ---- Step #6: perceptual weighting (A-weighting + within-note masking) ----
-
+    // ---- Step #6: perceptual weighting ----
     let w_cfg = WeightingConfig {
-        // Tune these if desired:
-        // - `mask_drop_db` (default 40 dB): drop very weak partials relative to the strongest (A-weighted) partial.
-        // - `mask_margin_db` (default 30 dB) & `erb_mask_atten` (default 0.25): partials within the ERB of a much stronger neighbor are attenuated.
-        // - `max_partials` caps how many partials from Step 4 summaries are considered.
-        // - `erb_mask_atten`: 0.25,
         ..Default::default()
     };
     let weighted = run_weighting_step(&parts, &w_cfg);
 
-    println!("\n== Step 6 ==");
+    vprintln!(verbose, "\n== Step 6 ==");
     if weighted.partials.is_empty() {
-        println!("No partials to weight.");
+        vprintln!(verbose, "No partials to weight.");
     } else {
-        println!("Anchor partial: {:?}", weighted.anchor_idx);
-        println!("f (Hz)     A(dB)   med(dB)   masked   weight");
+        vprintln!(verbose, "Anchor partial: {:?}", weighted.anchor_idx);
+        vprintln!(verbose, "f (Hz)     A(dB)   med(dB)   masked   weight");
         for wp in &weighted.partials {
-            println!(
+            vprintln!(
+                verbose,
                 "{:>8.3}  {:>6.2}   {:>7.2}   {:>5}   {:>6.3}",
                 wp.freq_hz,
                 wp.a_weight_db,
@@ -254,50 +345,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // ---- Step #7: dissonance profile sweep over interval (cents) ----
+    // ---- Step #7: dissonance profile sweep ----
     let d_cfg = DissonanceConfig {
         ..Default::default()
     };
     let d_result = run_dissonance_step(&weighted, None, &d_cfg);
 
-    println!("\n== Step 7 ==");
+    vprintln!(verbose, "\n== Step 7 ==");
     if d_result.smoothed.is_empty() {
-        println!("No dissonance profile (empty partial sets).");
+        vprintln!(verbose, "No dissonance profile (empty partial sets).");
     } else {
-        println!("Top local minima (by D value):");
+        vprintln!(verbose, "Top local minima (by D value):");
         for m in &d_result.minima {
             let ratio = (2.0_f32).powf(m.cents / 1200.0);
-            println!(
+            vprintln!(
+                verbose,
                 "  {:>7.1} cents  (ratio ≈ {:.5})   D ≈ {:>8.6}   depth ≈ {:>7.6}",
-                m.cents, ratio, m.value, m.depth
+                m.cents,
+                ratio,
+                m.value,
+                m.depth
             );
         }
         let vals: Vec<f32> = d_result.smoothed.iter().map(|p| p.value).collect();
         let (dmin, dmed, dmax) = summary_min_median_max(&vals);
-        println!(
+        vprintln!(
+            verbose,
             "D(r) stats (smoothed): min={:.6}  med={:.6}  max={:.6}",
-            dmin, dmed, dmax
+            dmin,
+            dmed,
+            dmax
         );
 
         #[cfg(feature = "visualise")]
         {
-            if let Err(e) = plot::plot_dissonance(&d_result, fname) {
+            if let Err(e) = plot::plot_dissonance(&d_result, display_name) {
                 eprintln!("Plotting failed: {e}");
             } else {
-                println!("Saved dissonance profile plot as dissonance.png");
+                vprintln!(verbose, "Saved dissonance profile plot as dissonance.png");
             }
         }
     }
 
-    // ---- Step #8: interval selection & naming near D(r) minima ----
+    // ---- Step #8: interval selection & naming ----
     let i_cfg = IntervalNamingConfig {
         ..Default::default()
     };
     let i_result = run_interval_naming_step(&d_result, &i_cfg);
 
-    println!("\n== Step 8 ==");
+    vprintln!(verbose, "\n== Step 8 ==");
     for (k, nm) in i_result.named.iter().enumerate() {
-        println!(
+        vprintln!(
+            verbose,
             "Min #{} at {:.2} cents: D={:.6} (depth {:.6}, sharpness {:.6})",
             k + 1,
             nm.at_cents,
@@ -306,42 +405,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             nm.sharpness
         );
         if let Some(best) = &nm.best {
-            println!(
+            vprintln!(
+                verbose,
                 "  → best: {}  (~{:.5})  err={:+.2} cents  J={:.4}  conf={:.2}",
-                best.label, best.ratio, best.cents_error, best.score, best.confidence
+                best.label,
+                best.ratio,
+                best.cents_error,
+                best.score,
+                best.confidence
             );
         } else {
-            println!("  → no rational within ±{:.1} cents", i_cfg.tolerance_cents);
+            vprintln!(
+                verbose,
+                "  → no rational within ±{:.1} cents",
+                i_cfg.tolerance_cents
+            );
         }
         if !nm.alternatives.is_empty() {
-            println!("    alternatives:");
+            vprintln!(verbose, "    alternatives:");
             for alt in &nm.alternatives {
-                println!(
+                vprintln!(
+                    verbose,
                     "      - {}/{}  (~{:.5})  err={:+.2}c  J={:.4}",
-                    alt.p, alt.q, alt.ratio, alt.cents_error, alt.score
+                    alt.p,
+                    alt.q,
+                    alt.ratio,
+                    alt.cents_error,
+                    alt.score
                 );
             }
         }
     }
 
-    // ---- Step #9: multi-note optimisation (N ≥ 3) ----
+    // ---- Step #9: multi-note optimisation ----
     let m_cfg = MultiDissonanceConfig {
         ..Default::default()
     };
     let m_res = run_multi_dissonance_step(&weighted, None, &m_cfg);
-    println!("\n== Step 9 ({}-note) ==", m_cfg.n_notes);
+
+    vprintln!(verbose, "\n== Step 9 ({}-note) ==", m_cfg.n_notes);
     for (idx, sol) in m_res.solutions.iter().enumerate() {
-        println!("Solution #{idx}:  total D ≈ {:.6}", sol.total_roughness);
+        vprintln!(
+            verbose,
+            "Solution #{idx}:  total D ≈ {:.6}",
+            sol.total_roughness
+        );
         for (k, r) in sol.ratios.iter().enumerate() {
             if k == 0 {
-                println!("  Note {k}:  r=1.00000 (0.0 cents)  [reference]");
+                vprintln!(verbose, "  Note {k}:  r=1.00000 (0.0 cents)  [reference]");
             } else if let Some(ap) = &r.approx {
-                println!(
+                vprintln!(
+                    verbose,
                     "  Note {k}:  r≈{:.5} ({:.1} cents)  ~ {}  |Δc|≈{:.2}c",
-                    r.ratio, r.cents, ap.label, ap.cents_error
+                    r.ratio,
+                    r.cents,
+                    ap.label,
+                    ap.cents_error
                 );
             } else {
-                println!("  Note {k}:  r≈{:.5} ({:.1} cents)", r.ratio, r.cents);
+                vprintln!(
+                    verbose,
+                    "  Note {k}:  r≈{:.5} ({:.1} cents)",
+                    r.ratio,
+                    r.cents
+                );
             }
         }
     }
@@ -349,12 +476,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "visualise")]
     {
         if m_cfg.n_notes == 3 {
-            // Use the same sweep range as Step 7 by default.
-
             use crate::heatmap::{compute_dissonance_grid_3, plot_dissonance_surface_3};
             let grid = compute_dissonance_grid_3(
                 &weighted,
-                None, // or Some(&[b1, b2]) if you have measured spectra for the other 2 notes
+                None,
                 m_cfg.min_cents,
                 m_cfg.max_cents,
                 m_cfg.step_cents,
@@ -362,12 +487,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             if let Err(e) = plot_dissonance_surface_3(
                 &grid,
-                format!("Dissonance Surface of `{}` (N=3)", fname),
-                fname,
+                format!("Dissonance Surface of `{}` (N=3)", display_name),
+                display_name,
             ) {
                 eprintln!("Surface plotting failed: {e}");
             } else {
-                println!("Saved dissonance surface as dissonance_3.png");
+                vprintln!(verbose, "Saved dissonance surface as dissonance_3.png");
             }
         }
     }
@@ -378,8 +503,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let _qres = run_quality_step(&parts, &f0, &d_result, &i_result, &ih, &q_cfg);
 
-    // ---- Step #11: musician‑facing outputs ----
-    println!("\n== Step 11 (Musician‑facing outputs) ==");
+    // ---- Step #11: musician-facing outputs (ALWAYS printed) ----
+    println!("\n== Step 11 (Musician-facing outputs) ==");
     // Choose the best f0 to reference: prefer refined if available.
     let f0_for_table: Option<f32> = if ih.b.is_some() {
         Some(ih.f0_refined_hz)
@@ -418,31 +543,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Dissonance CSV export (cents, D)
-    // We don't assume d_result.smoothed carries the cents; reconstruct from cfg
+    // Prepare dissonance CSV samples (cents, D)
     let mut dsamples: Vec<(f32, f32)> = Vec::with_capacity(d_result.smoothed.len());
     for (i, p) in d_result.smoothed.iter().enumerate() {
         let cents = d_cfg.min_cents + (i as f32) * d_cfg.step_cents;
         dsamples.push((cents, p.value));
     }
-    if let Err(e) = export_dissonance_csv(
-        gen_target_fn(format!("{}_dissonance-curve.csv", fname)),
-        &dsamples,
-    ) {
-        eprintln!("Could not write dissonance_curve.csv: {e}");
-    } else {
-        println!("Saved dissonance_curve.csv (cents,D).");
+
+    // CSV export control
+    if matches!(args.export, Export::All | Export::Dissonance) {
+        let path = format!("{}/{}_dissonance-curve.csv", out_dir.display(), out_prefix);
+        if let Err(e) = export_dissonance_csv(gen_target_fn(path), &dsamples) {
+            eprintln!("Could not write dissonance_curve.csv: {e}");
+        } else {
+            println!("Saved dissonance_curve.csv.");
+        }
     }
-    if let Err(e) = export_overtone_csv(
-        gen_target_fn(format!("{}_overtone-table.csv", fname)),
-        &overtones,
-    ) {
-        eprintln!("Could not write overtone_table.csv: {e}");
-    } else {
-        println!("Saved overtone_table.csv.");
+    if matches!(args.export, Export::All | Export::Overtones) {
+        let path = format!("{}/{}_overtone-table.csv", out_dir.display(), out_prefix);
+        if let Err(e) = export_overtone_csv(gen_target_fn(path), &overtones) {
+            eprintln!("Could not write overtone_table.csv: {e}");
+        } else {
+            println!("Saved overtone_table.csv.");
+        }
     }
 
-    // Two‑note tuning suggestion from Step 8
+    // Two-note tuning suggestion from Step 8
     let mut named_for_step11 = Vec::new();
     for nm in &i_result.named {
         if let Some(best) = &nm.best {
@@ -458,10 +584,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(msg) = tuning_suggestion_two_note(&named_for_step11) {
         println!("\n{}", msg);
     } else {
-        println!("\nNo two‑note tuning suggestion (no named minima).");
+        println!("\nNo two-note tuning suggestion (no named minima).");
     }
 
-    // N‑note suggestion (Step 9): use the first solution, if any
+    // N-note suggestion (Step 9): use the first solution, if any
     let multi_for_step11 = m_res.solutions.first().map(|sol| {
         sol.ratios
             .iter()
@@ -483,7 +609,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(summary) = tuning_suggestion_multi_note(multi_for_step11.as_deref()) {
         println!("{}", summary);
     } else {
-        println!("No N‑note tuning summary available.");
+        println!("No N-note tuning summary available.");
     }
 
     Ok(())

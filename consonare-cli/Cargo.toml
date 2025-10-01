@@ -4,8 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+clap = { version = "4.5.48", features = ["derive"] }
+colorous = "1.0.16"
 consonare-core = { version = "0.1.0", path = "../consonare-core" }
-plotters = { version = "0.3.7", optional = true }
+image = { version = "0.25.8", optional = true }
+plotters = { version = "0.3.7", optional = true, features = ["image", "bitmap_backend"] }
+rayon = { version = "1.11.0", optional = true }
 
 [features]
-visualise = ["dep:plotters"]
+visualise = ["dep:plotters", "dep:rayon", "dep:image"]
+rayon = ["dep:rayon"]
+image = ["dep:image"]
