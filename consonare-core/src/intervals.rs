@@ -14,7 +14,10 @@
 
 use std::cmp::Ordering;
 
-use crate::dissonance::{DissonancePoint, DissonanceResult};
+use crate::{
+    common::{cents_to_ratio, ratio_to_cents},
+    dissonance::{DissonancePoint, DissonanceResult},
+};
 
 /// Configuration for Step 8.
 #[derive(Clone, Debug)]
@@ -195,16 +198,6 @@ fn generate_candidates_for_min(
     out.sort_by(|a, b| (a.p, a.q).cmp(&(b.p, b.q)));
     out.dedup_by(|a, b| a.p == b.p && a.q == b.q);
     out
-}
-
-#[inline]
-fn ratio_to_cents(r: f32) -> f32 {
-    1200.0 * r.log2()
-}
-
-#[inline]
-fn cents_to_ratio(c: f32) -> f32 {
-    (c / 1200.0).exp2() // 2^(c/1200)
 }
 
 /// GCD for u32

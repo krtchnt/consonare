@@ -8,18 +8,11 @@
 //!
 //! The API is intentionally standalone, but mirrors Step #1 style (Config/Result,
 //! thiserror, etc.). Feed it mono f32 samples ([-1,1]) and the sample rate.
-//!
-//! # Cargo.toml
-//! ```toml
-//! [dependencies]
-//! thiserror = "1"
-//! realfft = "3"
-//! ```
-//!
-//! realfft pulls in rustfft. No other deps required.
 
 use realfft::{RealFftPlanner, num_complex::Complex32};
 use thiserror::Error;
+
+use crate::common::median;
 
 #[derive(Debug, Error)]
 pub enum SpectralError {
@@ -212,7 +205,7 @@ fn time_median_per_bin(mags: &[Vec<f32>], win_len: usize) -> Vec<Vec<f32>> {
             for mags_tt in mags.iter().take(t1).skip(t0) {
                 buf.push(mags_tt[k]);
             }
-            out_t[k] = median_f32(&mut buf);
+            out_t[k] = median(&mut buf);
         }
     }
     out
@@ -234,19 +227,6 @@ fn pow_to_db(p: f32) -> f32 {
         return -160.0;
     }
     10.0 * p.log10().max(-16.0)
-}
-
-fn median_f32(v: &mut [f32]) -> f32 {
-    if v.is_empty() {
-        return 0.0;
-    }
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let m = v.len() / 2;
-    if v.len() % 2 == 1 {
-        v[m]
-    } else {
-        0.5 * (v[m - 1] + v[m])
-    }
 }
 
 /// Percentile on a slice; p in [0,100]. Linear interpolation between ranks.
@@ -274,12 +254,14 @@ fn percentile(xs: &[f32], p: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use crate::common::median;
+
     use super::*;
 
     #[test]
     fn median_basic() {
         let mut v = vec![3.0, 1.0, 4.0, 1.5, 2.0];
-        assert!((median_f32(&mut v) - 2.0).abs() < 1e-6);
+        assert!((median(&mut v) - 2.0).abs() < 1e-6);
     }
 
     #[test]

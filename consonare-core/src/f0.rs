@@ -5,8 +5,10 @@
 //! FFT-based autocorrelation + O(N) cumulative sums (a common "fast YIN" approach).
 //!
 //! Expected integration remains the same:
-//!   use crate::preprocess::SpectralResult;
-//!   let f0 = fundamental::run_f0_step(&result.samples, sr, Some(&spec), &F0Config::default())?;
+//! ```
+//! use crate::preprocess::SpectralResult;
+//! let f0 = fundamental::run_f0_step(&result.samples, sr, Some(&spec), &F0Config::default())?;
+//! ```
 
 use std::f32::consts::PI;
 

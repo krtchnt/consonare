@@ -1,21 +1,34 @@
-use consonare_core::dissonance::{DissonanceConfig, run_dissonance_step};
 use consonare_core::{
+    diagnostics::{QualityConfig, run_quality_step},
+    dissonance::{DissonanceConfig, run_dissonance_step},
+    dissonance_n::{MultiDissonanceConfig, run_multi_dissonance_step},
     f0::{F0Config, run_f0_step},
+    inharmonicity::{InharmonicityConfig, run_inharmonicity_step},
     input::{Config, process_file},
     intervals::{IntervalNamingConfig, run_interval_naming_step},
+    musician::{
+        NamedInterval, export_dissonance_csv, export_overtone_csv, overtone_table,
+        tuning_suggestion_multi_note, tuning_suggestion_two_note,
+    },
     partials::{PartialsConfig, run_partials_step},
     preprocess::{SpectralConfig, run_spectral_step},
     weighting::{WeightingConfig, run_weighting_step},
 };
 
+use crate::common::gen_target_fn;
+
+mod common;
 #[cfg(feature = "visualise")]
-mod visualise;
+mod heatmap;
+#[cfg(feature = "visualise")]
+mod plot;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let fname = "keyboards_upright-piano_e4.wav";
+
     // ---- Step #1: steady-pitch preprocessing & checks ----
     let cfg = Config::default(); // tweak thresholds/window/hop here if needed
-    let result = process_file("samples/piano-c4-1s.wav", &cfg)?;
-    //let result = process_file("samples/violin-c5-1s.wav", &cfg)?;
+    let result = process_file(format!("samples/{fname}"), &cfg)?;
 
     println!("== Step 1 ==");
     println!("Sample rate: {} Hz", result.analysis.sample_rate);
@@ -177,6 +190,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ---- Step #5: inharmonicity modelling (optional) ----
+    //
+    // Fit the stiff-string coefficient B from partials (if applicable) using
+    // the linearized model r_n^2 = a + b n^2 with r_n = f_n / (n * f0_hat).
+    // Accept only if the fit quality is good; otherwise skip.
+    let ih_cfg = InharmonicityConfig {
+        ..Default::default()
+    };
+    let f0_hat_opt = f0.consensus_f0_hz;
+    let ih = run_inharmonicity_step(&parts, f0_hat_opt, &ih_cfg);
+
+    println!("\n== Step 5 ==");
+    if ih.b.is_none() {
+        if let Some(f0h) = f0_hat_opt {
+            println!(
+                "No reliable stiff-string fit (used {} points, R^2={:.3}). Keeping empirical partials. f0≈{:.2} Hz",
+                ih.used_points, ih.r2, f0h
+            );
+        } else {
+            println!("No f0 available → cannot attempt inharmonicity fit.");
+        }
+    } else {
+        let b_est = ih.b.unwrap();
+        println!(
+            "Accepted stiff-string model: B ≈ {:.6e}, R^2={:.3}, points={}",
+            b_est, ih.r2, ih.used_points
+        );
+        println!(
+            "Refined f0 ≈ {:.2} Hz (median abs error ≈ {:.2} cents)",
+            ih.f0_refined_hz,
+            ih.median_abs_cents.unwrap_or(0.0)
+        );
+    }
+
     // ---- Step #6: perceptual weighting (A-weighting + within-note masking) ----
 
     let w_cfg = WeightingConfig {
@@ -234,7 +281,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         #[cfg(feature = "visualise")]
         {
-            if let Err(e) = visualise::plot_dissonance(&d_result) {
+            if let Err(e) = plot::plot_dissonance(&d_result, fname) {
                 eprintln!("Plotting failed: {e}");
             } else {
                 println!("Saved dissonance profile plot as dissonance.png");
@@ -275,6 +322,168 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         }
+    }
+
+    // ---- Step #9: multi-note optimisation (N ≥ 3) ----
+    let m_cfg = MultiDissonanceConfig {
+        ..Default::default()
+    };
+    let m_res = run_multi_dissonance_step(&weighted, None, &m_cfg);
+    println!("\n== Step 9 ({}-note) ==", m_cfg.n_notes);
+    for (idx, sol) in m_res.solutions.iter().enumerate() {
+        println!("Solution #{idx}:  total D ≈ {:.6}", sol.total_roughness);
+        for (k, r) in sol.ratios.iter().enumerate() {
+            if k == 0 {
+                println!("  Note {k}:  r=1.00000 (0.0 cents)  [reference]");
+            } else if let Some(ap) = &r.approx {
+                println!(
+                    "  Note {k}:  r≈{:.5} ({:.1} cents)  ~ {}  |Δc|≈{:.2}c",
+                    r.ratio, r.cents, ap.label, ap.cents_error
+                );
+            } else {
+                println!("  Note {k}:  r≈{:.5} ({:.1} cents)", r.ratio, r.cents);
+            }
+        }
+    }
+
+    #[cfg(feature = "visualise")]
+    {
+        if m_cfg.n_notes == 3 {
+            // Use the same sweep range as Step 7 by default.
+
+            use crate::heatmap::{compute_dissonance_grid_3, plot_dissonance_surface_3};
+            let grid = compute_dissonance_grid_3(
+                &weighted,
+                None, // or Some(&[b1, b2]) if you have measured spectra for the other 2 notes
+                m_cfg.min_cents,
+                m_cfg.max_cents,
+                m_cfg.step_cents,
+                m_cfg.max_deltaf_over_cbw,
+            );
+            if let Err(e) = plot_dissonance_surface_3(
+                &grid,
+                format!("Dissonance Surface of `{}` (N=3)", fname),
+                fname,
+            ) {
+                eprintln!("Surface plotting failed: {e}");
+            } else {
+                println!("Saved dissonance surface as dissonance_3.png");
+            }
+        }
+    }
+
+    // ---- Step #10: quality control & diagnostics ----
+    let q_cfg = QualityConfig {
+        ..Default::default()
+    };
+    let _qres = run_quality_step(&parts, &f0, &d_result, &i_result, &ih, &q_cfg);
+
+    // ---- Step #11: musician‑facing outputs ----
+    println!("\n== Step 11 (Musician‑facing outputs) ==");
+    // Choose the best f0 to reference: prefer refined if available.
+    let f0_for_table: Option<f32> = if ih.b.is_some() {
+        Some(ih.f0_refined_hz)
+    } else {
+        f0.consensus_f0_hz
+    };
+    if let Some(f_ref) = f0_for_table {
+        println!("Reference f0 for overtone table: {:.3} Hz", f_ref);
+    } else {
+        println!("Reference f0 for overtone table: (none)");
+    }
+
+    // Collect weighted partials (freq_hz, median_db, weight)
+    let wtriples: Vec<(f32, f32, f32)> = weighted
+        .partials
+        .iter()
+        .map(|wp| (wp.freq_hz, wp.median_db, wp.weight))
+        .collect();
+
+    // Build overtone table (top 20 by frequency)
+    let overtones = overtone_table(f0_for_table, &wtriples, 20);
+    if overtones.is_empty() {
+        println!("No overtones available to print.");
+    } else {
+        println!("Overtone table (first {}):", overtones.len());
+        println!(" n   f_n (Hz)    Δcents    level(dB)  weight");
+        for r in &overtones {
+            let dc = r
+                .cents_from_harm
+                .map(|x| format!("{:+6.2}", x))
+                .unwrap_or_else(|| "   --  ".into());
+            println!(
+                " {:>2}  {:>9.3}  {}   {:>8.2}  {:>6.3}",
+                r.n, r.freq_hz, dc, r.amplitude_db, r.weight
+            );
+        }
+    }
+
+    // Dissonance CSV export (cents, D)
+    // We don't assume d_result.smoothed carries the cents; reconstruct from cfg
+    let mut dsamples: Vec<(f32, f32)> = Vec::with_capacity(d_result.smoothed.len());
+    for (i, p) in d_result.smoothed.iter().enumerate() {
+        let cents = d_cfg.min_cents + (i as f32) * d_cfg.step_cents;
+        dsamples.push((cents, p.value));
+    }
+    if let Err(e) = export_dissonance_csv(
+        gen_target_fn(format!("{}_dissonance-curve.csv", fname)),
+        &dsamples,
+    ) {
+        eprintln!("Could not write dissonance_curve.csv: {e}");
+    } else {
+        println!("Saved dissonance_curve.csv (cents,D).");
+    }
+    if let Err(e) = export_overtone_csv(
+        gen_target_fn(format!("{}_overtone-table.csv", fname)),
+        &overtones,
+    ) {
+        eprintln!("Could not write overtone_table.csv: {e}");
+    } else {
+        println!("Saved overtone_table.csv.");
+    }
+
+    // Two‑note tuning suggestion from Step 8
+    let mut named_for_step11 = Vec::new();
+    for nm in &i_result.named {
+        if let Some(best) = &nm.best {
+            named_for_step11.push(NamedInterval {
+                label: best.label.clone(),
+                ratio: best.ratio,
+                at_cents: nm.at_cents,
+                cents_error: best.cents_error,
+                confidence: best.confidence,
+            });
+        }
+    }
+    if let Some(msg) = tuning_suggestion_two_note(&named_for_step11) {
+        println!("\n{}", msg);
+    } else {
+        println!("\nNo two‑note tuning suggestion (no named minima).");
+    }
+
+    // N‑note suggestion (Step 9): use the first solution, if any
+    let multi_for_step11 = m_res.solutions.first().map(|sol| {
+        sol.ratios
+            .iter()
+            .map(|r| {
+                if let Some(ap) = &r.approx {
+                    (
+                        r.ratio,
+                        r.cents,
+                        Some(ap.label.clone()),
+                        Some(ap.cents_error),
+                    )
+                } else {
+                    (r.ratio, r.cents, None, None)
+                }
+            })
+            .collect::<Vec<_>>()
+    });
+
+    if let Some(summary) = tuning_suggestion_multi_note(multi_for_step11.as_deref()) {
+        println!("{}", summary);
+    } else {
+        println!("No N‑note tuning summary available.");
     }
 
     Ok(())

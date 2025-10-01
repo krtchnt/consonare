@@ -1,7 +1,12 @@
+pub mod common;
+pub mod diagnostics;
 pub mod dissonance;
+pub mod dissonance_n;
 pub mod f0;
+pub mod inharmonicity;
 pub mod input;
 pub mod intervals;
+pub mod musician;
 pub mod partials;
 pub mod preprocess;
 pub mod weighting;

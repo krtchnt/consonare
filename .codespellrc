@@ -1,2 +1,3 @@
 [codespell]
-skip = ./papers/proposal/main.pdf
+skip = ./papers/proposal/main.pdf,./papers/report/main.pdf
+ignore-words-list = inh

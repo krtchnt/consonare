@@ -1,17 +1,13 @@
 #[cfg(feature = "visualise")]
 pub fn plot_dissonance(
     d_result: &consonare_core::dissonance::DissonanceResult,
+    fname: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::path::PathBuf;
-
     use plotters::prelude::*;
 
-    // Figure out where to put the file
-    let target_dir = std::env::var("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("target"));
+    use crate::common::gen_target_fn;
 
-    let out_file = target_dir.join("dissonance.png");
+    let out_file = gen_target_fn(format!("{}_dissonance.png", fname));
 
     let root = BitMapBackend::new(&out_file, (1200, 900)).into_drawing_area();
     root.fill(&WHITE)?;
@@ -29,7 +25,10 @@ pub fn plot_dissonance(
     );
 
     let mut chart = ChartBuilder::on(&root)
-        .caption("Dissonance Profile", ("sans-serif", 24))
+        .caption(
+            format!("Dissonance Profile of `{}`", fname),
+            ("sans-serif", 24),
+        )
         .margin(10)
         .x_label_area_size(40)
         .y_label_area_size(60)
@@ -39,6 +38,8 @@ pub fn plot_dissonance(
         .configure_mesh()
         .x_desc("Interval (cents)")
         .y_desc("Dissonance")
+        .x_labels(((max_cents - min_cents) / 100.0).ceil() as usize + 1)
+        .x_label_formatter(&|x| format!("{:.0}", x))
         .draw()?;
 
     chart

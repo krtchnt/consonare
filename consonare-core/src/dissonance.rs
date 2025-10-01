@@ -24,7 +24,10 @@
 //!
 //! API mirrors prior steps: a Config, a Result, and a single `run_*` entry point.
 
-use crate::weighting::{WeightedPartial, WeightingResult};
+use crate::{
+    common::{cbw_hz_plomp_levelt, cents_to_ratio, sethares_pair_roughness},
+    weighting::{WeightedPartial, WeightingResult},
+};
 
 #[derive(Clone, Debug)]
 pub struct DissonanceConfig {
@@ -74,32 +77,6 @@ pub struct DissonanceResult {
     pub grid: Vec<DissonancePoint>,
     pub smoothed: Vec<DissonancePoint>,
     pub minima: Vec<LocalMinimum>,
-}
-
-#[inline]
-fn cents_to_ratio(c: f32) -> f32 {
-    (2.0_f32).powf(c / 1200.0)
-}
-
-#[inline]
-fn cbw_hz_plomp_levelt(f_hz: f32) -> f32 {
-    // A common analytical fit for critical bandwidth around f (Hz).
-    // This specific shape isn't too critical when used only as a pruning limit.
-    // Here we reuse the well-known Glasberg–Moore ERB conversion as a proxy.
-    // (It scales similarly in the range we care about and is cheap to compute.)
-    let fk = f_hz / 1000.0;
-    24.7 * (4.37 * fk + 1.0) // Hz
-}
-
-#[inline]
-fn sethares_pair_roughness(delta_f: f32, f_mean: f32) -> f32 {
-    // Sethares/Plomp–Levelt kernel parameters
-    let a = 3.5_f32;
-    let b = 5.75_f32;
-    // Critical-band scaling term
-    let s = 0.24_f32 / (0.021_f32 * f_mean + 19.0_f32);
-    let x = s * delta_f.abs();
-    (-(a * x)).exp() - (-(b * x)).exp()
 }
 
 /// Compute D(r) over a cents grid using the specified kernel.

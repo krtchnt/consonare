@@ -12,7 +12,7 @@
 
 use std::error::Error;
 
-use crate::preprocess::SpectralResult;
+use crate::{common::cents_diff, preprocess::SpectralResult};
 
 /// Configuration for partial extraction & tracking.
 #[derive(Debug, Clone)]
@@ -343,12 +343,4 @@ fn median_f32<I: Iterator<Item = f32>>(iter: I) -> f32 {
     } else {
         0.5 * (v[mid - 1] + v[mid])
     }
-}
-
-/// Cents difference between two positive frequencies.
-fn cents_diff(f1: f32, f2: f32) -> f32 {
-    if f1 <= 0.0 || f2 <= 0.0 {
-        return f32::INFINITY;
-    }
-    1200.0 * ((f2 / f1) as f64).log2() as f32
 }
