@@ -58,14 +58,14 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            trim_rms_dbfs: -50.0,
-            min_keep_ms: 30,
+            trim_rms_dbfs: -70.0, // was -50.0
+            min_keep_ms: 80,      // >= yin_window_ms
             target_peak_dbfs: -1.0,
             yin_window_ms: 50,
             hop_ms: 10,
             yin_power_threshold: 5.0,
             yin_clarity_threshold: 0.7,
-            fmin_hz: 50.0,
+            fmin_hz: 40.0, // give room for very low pedal tones
             fmax_hz: 1000.0,
         }
     }
@@ -300,8 +300,17 @@ fn trim_silence_bounds_rms(
     while end > 0 && rms[end - 1] < thr {
         end -= 1;
     }
+    // If nothing passed the gate, keep a centered minimum chunk instead of returning (0,0).
     if start >= end {
-        return (0, 0);
+        let min_keep = ((min_keep_ms as f32 / 1000.0) * sr as f32).round() as usize;
+        if samples.len() <= min_keep {
+            return (0, samples.len());
+        }
+        let center = samples.len() / 2;
+        let half_keep = min_keep / 2;
+        let s = center.saturating_sub(half_keep);
+        let e = (center + half_keep).min(samples.len());
+        return (s, e);
     }
     // Expand by half-window to map RMS centers back to sample indices.
     let mut s = start.saturating_mul(1).saturating_sub(half);

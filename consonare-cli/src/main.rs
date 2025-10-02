@@ -139,10 +139,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ---- Step #2: spectral preprocessing (band-limit, STFT, median, floor/mask) ----
     let sr = result.analysis.sample_rate;
-    let spec_cfg = SpectralConfig {
-        ..Default::default()
-    };
-    let spec = run_spectral_step(&result.samples, sr, &spec_cfg)?;
+
+    // Try larger → smaller windows until we get at least 3 frames.
+    let mut spec = None;
+    for (win, hop, medlen) in [
+        (16384usize, 4096usize, 5usize), // ~0.37 s window @44.1k
+        (8192, 2048, 5),                 // ~0.19 s
+        (4096, 1024, 3),                 // ~0.09 s
+    ] {
+        let cfg_try = SpectralConfig {
+            win_size: win,
+            hop_size: hop,
+            median_len: medlen,
+            ..Default::default()
+        };
+        let s = run_spectral_step(&result.samples, sr, &cfg_try)?;
+        if s.times_s.len() >= 3 {
+            spec = Some(s);
+            break;
+        }
+    }
+    // Fallback if even the smallest window failed (extremely short / heavy trim)
+    let spec = spec.unwrap_or_else(|| {
+        run_spectral_step(
+            &result.samples,
+            sr,
+            &SpectralConfig {
+                win_size: 4096,
+                hop_size: 512,
+                median_len: 3,
+                ..Default::default()
+            },
+        )
+        .expect("spectral step (fallback)")
+    });
 
     vprintln!(verbose, "\n== Step 2 ==");
     vprintln!(
@@ -194,9 +224,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ---- Step #3: fundamental estimation ----
-    let f0_cfg = F0Config {
+    let mut f0_cfg = F0Config {
+        // align with the STFT grid (helps agreement/consensus too)
+        yin_frame: spec.freqs_hz.len().saturating_sub(1) * 2, // ≈ win_size
+        yin_hop: Some(if spec.times_s.len() > 1 {
+            ((spec.times_s[1] - spec.times_s[0]) * sr as f32) as usize
+        } else {
+            1024
+        }),
         ..Default::default()
     };
+
+    if let Some(med) = result.analysis.median_f0_hz {
+        // A conservative but effective band that avoids 50/60 Hz subharmonics:
+        f0_cfg.fmin_hz = (med * 0.6).max(50.0);
+        f0_cfg.fmax_hz = med * 1.8;
+    }
+
     let f0 = run_f0_step(&result.samples, sr, Some(&spec), &f0_cfg)?;
 
     vprintln!(verbose, "\n== Step 3 ==");
@@ -233,8 +277,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ---- Step #4: partial extraction ----
-    let p_cfg = PartialsConfig {
-        ..Default::default()
+    let p_cfg = {
+        let mut cfg = PartialsConfig {
+            ..Default::default()
+        };
+        if spec.times_s.len() < 4 {
+            cfg.min_track_len = 2; // accept 2-frame tracks when the signal is short
+            cfg.track_max_jump_cents = 50.0; // slightly easier linking across coarse hops
+        }
+        cfg
     };
     let consensus_f0_hz_f32 = f0.consensus_f0_hz;
     let parts = run_partials_step(&spec, consensus_f0_hz_f32, &p_cfg)?;

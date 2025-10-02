@@ -508,17 +508,42 @@ fn fuse_candidates(
     spec_hz: Option<f32>,
     spec_score: f32,
 ) -> (Option<f32>, f32) {
-    let mut agree = 0.0_f32;
-    let mut fused = None;
+    let mut agree = 0.0f32;
+    let mut fused: Option<f32> = None;
+
+    // Quick hum test
+    let is_hum = |x: f32| (48.0..=52.5).contains(&x) || (59.0..=61.5).contains(&x);
 
     match (yin_hz, cep_hz) {
         (Some(a), Some(b)) => {
-            let cents = 1200.0 * ((a / b).max(1e-9)).log2().abs();
-            let w = ((1.0 - (cents / 100.0)).clamp(0.0, 1.0)) * 0.7 + 0.3 * (yin_s.min(cep_s));
-            agree = w;
-            let wa = yin_s.max(1e-3);
-            let wb = cep_s.max(1e-3);
-            fused = Some((a * wa + b * wb) / (wa + wb));
+            let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+
+            // Prefer the higher candidate when they form a near-integer 2–4× relation
+            // (typical subharmonic confusion; bells/trombone often trigger this)
+            let near_integer = (2..=4).any(|k| {
+                let cents = 1200.0 * ((hi / (k as f32 * lo)).abs().max(1e-9)).log2().abs();
+                cents < 30.0
+            });
+
+            if near_integer {
+                fused = Some(hi);
+                agree = (yin_s.max(cep_s) * 0.8).min(1.0);
+            } else {
+                // Original weighting when not an integer relation
+                let cents = 1200.0 * ((a / b).max(1e-9)).log2().abs();
+                let w = ((1.0 - (cents / 100.0)).clamp(0.0, 1.0)) * 0.7 + 0.3 * (yin_s.min(cep_s));
+                agree = w;
+                let wa = yin_s.max(1e-3);
+                let wb = cep_s.max(1e-3);
+                fused = Some((a * wa + b * wb) / (wa + wb));
+            }
+
+            // Hum guard: if one candidate sits at 50/60 Hz and the other is well above 120 Hz,
+            // keep the higher one.
+            if fused.is_some() && (is_hum(a) ^ is_hum(b)) && (a.max(b) > 120.0) {
+                fused = Some(a.max(b));
+                agree = agree.max(0.6);
+            }
         }
         (Some(a), None) => {
             fused = Some(a);
@@ -528,7 +553,7 @@ fn fuse_candidates(
             fused = Some(b);
             agree = cep_s * 0.6;
         }
-        _ => {}
+        (None, None) => { /* keep None */ }
     }
 
     // If spectral comb gives a strong refinement, prefer it
