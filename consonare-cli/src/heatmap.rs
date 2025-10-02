@@ -131,7 +131,6 @@ pub fn compute_dissonance_grid_3(
 #[cfg(feature = "visualise")]
 pub fn plot_dissonance_surface_3(
     grid: &DissonanceGrid2D,
-    title: impl AsRef<str>,
     fname: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::common::gen_target_fn;
@@ -148,8 +147,9 @@ pub fn plot_dissonance_surface_3(
     let ymin = *grid.y_cents.first().unwrap_or(&0.0);
     let ymax = *grid.y_cents.last().unwrap_or(&1.0);
 
+    let caption = format!("Dissonance Surface of `{}` (N=3)", fname);
     let mut chart = ChartBuilder::on(&root)
-        .caption(title, ("sans-serif", 24))
+        .caption(caption, ("sans-serif", 24))
         .margin(10)
         .x_label_area_size(50)
         .y_label_area_size(60)

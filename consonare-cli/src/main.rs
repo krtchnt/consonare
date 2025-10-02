@@ -379,7 +379,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         #[cfg(feature = "visualise")]
         {
-            if let Err(e) = plot::plot_dissonance(&d_result, display_name) {
+            if let Err(e) = plot::plot_dissonance(&d_result, out_prefix) {
                 eprintln!("Plotting failed: {e}");
             } else {
                 vprintln!(verbose, "Saved dissonance profile plot as dissonance.png");
@@ -485,11 +485,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 m_cfg.step_cents,
                 m_cfg.max_deltaf_over_cbw,
             );
-            if let Err(e) = plot_dissonance_surface_3(
-                &grid,
-                format!("Dissonance Surface of `{}` (N=3)", display_name),
-                display_name,
-            ) {
+            if let Err(e) = plot_dissonance_surface_3(&grid, out_prefix) {
                 eprintln!("Surface plotting failed: {e}");
             } else {
                 vprintln!(verbose, "Saved dissonance surface as dissonance_3.png");
