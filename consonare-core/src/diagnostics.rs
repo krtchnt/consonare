@@ -213,23 +213,37 @@ pub fn run_quality_step(
     // Intervals table
     if !names.named.is_empty() {
         println!("Recommended intervals:");
+
         println!(
-            "  {:>7}  {:>10}  {:>9}  {:>9}  {:>10}  label [conf]",
-            "cents", "D", "depth", "sharpness", "p/q"
+            "  {:>7}  {:>10}  {:>9}  {:>9}  {:>8}  {:<24}  [conf]",
+            "cents", "D", "depth", "sharpness", "p/q", "label"
         );
+
         for nm in &names.named {
-            let pq_label = match &nm.best {
-                Some(IntervalCandidate { p, q, label, .. }) => format!("{}/{}  {}", p, q, label),
-                None => "-".to_string(),
-            };
-            let conf = match &nm.best {
-                Some(c) => format!("{:.2}", c.confidence),
-                None => "-".to_string(),
-            };
-            println!(
-                "  {:>7.2}  {:>10.6}  {:>9.6}  {:>9.6}  {:>10}  [{}]",
-                nm.at_cents, nm.at_value, nm.depth, nm.sharpness, pq_label, conf
-            );
+            if let Some(IntervalCandidate {
+                p,
+                q,
+                label,
+                confidence,
+                ..
+            }) = &nm.best
+            {
+                println!(
+                    "  {:>7.2}  {:>10.6}  {:>9.6}  {:>9.6}  {:>8}  {:<24}  [{:.2}]",
+                    nm.at_cents,
+                    nm.at_value,
+                    nm.depth,
+                    nm.sharpness,
+                    format!("{}/{}", p, q),
+                    label,
+                    confidence
+                );
+            } else {
+                println!(
+                    "  {:>7.2}  {:>10.6}  {:>9.6}  {:>9.6}  {:>8}  {:<24}  [-]",
+                    nm.at_cents, nm.at_value, nm.depth, nm.sharpness, "-", "-"
+                );
+            }
         }
     }
 

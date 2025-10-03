@@ -58,7 +58,7 @@ impl Default for DissonanceConfig {
             step_cents: 2.0,
             smooth_window: 5,
             max_deltaf_over_cbw: Some(2.0),
-            top_k_minima: 8,
+            top_k_minima: 16,
             normalize_by_cbw: true,
         }
     }
