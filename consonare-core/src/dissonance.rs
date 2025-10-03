@@ -25,7 +25,10 @@
 //! API mirrors prior steps: a Config, a Result, and a single `run_*` entry point.
 
 use crate::{
-    common::{cbw_hz_plomp_levelt, cents_to_ratio, sethares_pair_roughness},
+    common::{
+        cbw_hz_plomp_levelt, cents_to_ratio, sethares_pair_roughness,
+        sethares_pair_roughness_no_erb,
+    },
     weighting::{WeightedPartial, WeightingResult},
 };
 
@@ -43,6 +46,8 @@ pub struct DissonanceConfig {
     pub max_deltaf_over_cbw: Option<f32>,
     /// Number of minima to keep (by increasing D value).
     pub top_k_minima: usize,
+    /// If false, use a fixed roughness kernel (no ERB/CBW scaling).
+    pub normalize_by_cbw: bool,
 }
 
 impl Default for DissonanceConfig {
@@ -54,6 +59,7 @@ impl Default for DissonanceConfig {
             smooth_window: 5,
             max_deltaf_over_cbw: Some(2.0),
             top_k_minima: 8,
+            normalize_by_cbw: true,
         }
     }
 }
@@ -138,7 +144,11 @@ pub fn run_dissonance_step(
                     }
                 }
 
-                let pr = sethares_pair_roughness(delta, f_m);
+                let pr = if cfg.normalize_by_cbw {
+                    sethares_pair_roughness(delta, f_m)
+                } else {
+                    sethares_pair_roughness_no_erb(delta)
+                };
                 d_total += w * pr.max(0.0);
             }
         }

@@ -29,6 +29,15 @@ pub fn sethares_pair_roughness(delta_f: f32, f_mean: f32) -> f32 {
     (-(a * x)).exp() - (-(b * x)).exp()
 }
 
+#[inline]
+pub fn sethares_pair_roughness_no_erb(delta_f: f32) -> f32 {
+    // Same a,b as usual, but no ERB/CBW scaling (s = 1).
+    let a = 3.5_f32;
+    let b = 5.75_f32;
+    let x = delta_f.abs();
+    (-(a * x)).exp() - (-(b * x)).exp()
+}
+
 /// Compute median of a list.
 pub fn median(xs: &mut [f32]) -> f32 {
     if xs.is_empty() {

@@ -138,6 +138,7 @@ pub fn run_multi_dissonance_step(
         smooth_window: 5,
         max_deltaf_over_cbw: cfg.max_deltaf_over_cbw,
         top_k_minima: cfg.seeds_per_note,
+        ..Default::default()
     };
     let seeds_per_coord: Vec<Vec<f32>> = (1..n)
         .map(|k| {

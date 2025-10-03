@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 // Step 11: Musician-facing outputs (overtone table, dissonance export, tuning suggestions)
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -43,31 +44,22 @@ pub fn overtone_table(
     weighted: &[(f32, f32, f32)],
     max_rows: usize,
 ) -> Vec<OvertoneRow> {
+    // Build raw rows with lin_amp precomputed.
     let mut rows: Vec<OvertoneRow> = weighted
         .iter()
-        .map(|&(f_hz, amp_db, w)| {
-            let lin = 10f32.powf(amp_db / 20.0);
-            OvertoneRow {
-                n: 0, // fill later
-                freq_hz: f_hz,
-                cents_from_harm: None,
-                amplitude_db: amp_db,
-                lin_amp: lin,
-                weight: w,
-            }
+        .map(|&(f_hz, amp_db, w)| OvertoneRow {
+            n: 0,
+            freq_hz: f_hz,
+            cents_from_harm: None,
+            amplitude_db: amp_db,
+            lin_amp: 10f32.powf(amp_db / 20.0),
+            weight: w,
         })
         .collect();
 
-    // Sort by frequency
-    rows.sort_by(|a, b| {
-        a.freq_hz
-            .partial_cmp(&b.freq_hz)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    if let Some(f0) = f0_hz
-        && f0 > 0.0
-    {
+    // If we have a valid f0, compute harmonic index n and Δcents.
+    let f0_opt = f0_hz.filter(|f| *f > 0.0);
+    if let Some(f0) = f0_opt {
         for row in rows.iter_mut() {
             let n = (row.freq_hz / f0).round().max(1.0) as usize;
             row.n = n;
@@ -79,12 +71,64 @@ pub fn overtone_table(
             };
             row.cents_from_harm = Some(cents);
         }
-    }
 
-    if rows.len() > max_rows {
-        rows.truncate(max_rows);
+        // Keep the strongest (by salience) per harmonic n.
+        let mut best_by_n = HashMap::<usize, OvertoneRow>::new();
+        for row in rows.into_iter() {
+            let salience = row.lin_amp * row.weight;
+            best_by_n
+                .entry(row.n)
+                .and_modify(|best| {
+                    let best_sal = best.lin_amp * best.weight;
+                    let better_sal = salience > best_sal + 1e-9;
+                    let tie_sal = (salience - best_sal).abs() <= 1e-9;
+                    let row_dc = row.cents_from_harm.unwrap_or(f32::INFINITY).abs();
+                    let best_dc = best.cents_from_harm.unwrap_or(f32::INFINITY).abs();
+                    let better_dc = row_dc < best_dc - 1e-6;
+                    let tie_dc = (row_dc - best_dc).abs() <= 1e-6;
+                    let better_freq = row.freq_hz < best.freq_hz;
+                    if better_sal || (tie_sal && (better_dc || (tie_dc && better_freq))) {
+                        *best = row;
+                    }
+                })
+                .or_insert(row);
+        }
+
+        // Collect winners and sort: salience desc, then frequency asc.
+        let mut dedup: Vec<OvertoneRow> = best_by_n.into_values().collect();
+        dedup.sort_by(|a, b| {
+            let sa = a.lin_amp * a.weight;
+            let sb = b.lin_amp * b.weight;
+            sb.partial_cmp(&sa)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    a.freq_hz
+                        .partial_cmp(&b.freq_hz)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+        if dedup.len() > max_rows {
+            dedup.truncate(max_rows);
+        }
+        dedup
+    } else {
+        // No f0: rank purely by salience, then frequency.
+        rows.sort_by(|a, b| {
+            let sa = a.lin_amp * a.weight;
+            let sb = b.lin_amp * b.weight;
+            sb.partial_cmp(&sa)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    a.freq_hz
+                        .partial_cmp(&b.freq_hz)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+        if rows.len() > max_rows {
+            rows.truncate(max_rows);
+        }
+        rows
     }
-    rows
 }
 
 /// Create a succinct two‑note tuning suggestion from Step 8 named minima.

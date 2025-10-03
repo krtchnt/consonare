@@ -24,6 +24,10 @@ pub struct WeightingConfig {
     pub erb_mask_atten: f32, // e.g., 0.25
     /// Maximum number of partials to consider from `summaries` (sorted by freq).
     pub max_partials: usize, // e.g., 20
+    /// If false, skip ERB masking (treat all partials as unmasked).
+    pub enable_masking: bool,
+    /// If false, set weights to 1.0 and A-weighting contribution to 0 dB.
+    pub enable_perceptual_weighting: bool,
 }
 
 impl Default for WeightingConfig {
@@ -33,6 +37,8 @@ impl Default for WeightingConfig {
             mask_margin_db: 30.0,
             erb_mask_atten: 0.25,
             max_partials: 20,
+            enable_masking: true,
+            enable_perceptual_weighting: true,
         }
     }
 }
@@ -110,21 +116,28 @@ pub fn run_weighting_step(parts: &PartialsResult, cfg: &WeightingConfig) -> Weig
 
         // ERB masking by any stronger neighbor
         let mut masked = false;
-        for (j, candidates_j) in candidates.iter().enumerate() {
-            if j == i {
-                continue;
-            }
-            let cj = &candidates_j;
-            if cj.level_aw_db >= c.level_aw_db + cfg.mask_margin_db
-                && (c.freq_hz - cj.freq_hz).abs() <= cj.erb_hz
-            {
-                masked = true;
-                break;
+        if cfg.enable_masking {
+            for (j, candidates_j) in candidates.iter().enumerate() {
+                if j == i {
+                    continue;
+                }
+                let cj = &candidates_j;
+                if cj.level_aw_db >= c.level_aw_db + cfg.mask_margin_db
+                    && (c.freq_hz - cj.freq_hz).abs() <= cj.erb_hz
+                {
+                    masked = true;
+                    break;
+                }
             }
         }
 
         // Linear weight relative to anchor using dB difference after A-weighting.
-        let mut w_lin = db_to_linear(-(rel_to_anchor)); // 0 dB -> 1.0, -6 dB -> ~0.5, etc.
+        let mut w_lin = if cfg.enable_perceptual_weighting {
+            // 0 dB -> 1.0, -6 dB -> ~0.5, etc.
+            db_to_linear(-(rel_to_anchor)) // A-weighted, relative to anchor
+        } else {
+            1.0 // flat weighting
+        };
         if masked {
             w_lin *= cfg.erb_mask_atten;
         }
@@ -132,7 +145,11 @@ pub fn run_weighting_step(parts: &PartialsResult, cfg: &WeightingConfig) -> Weig
         out.push(WeightedPartial {
             freq_hz: c.freq_hz,
             weight: w_lin,
-            a_weight_db: c.a_db,
+            a_weight_db: if cfg.enable_perceptual_weighting {
+                c.a_db
+            } else {
+                0.0
+            },
             median_db: c.median_db,
             erb_masked: masked,
         });

@@ -27,8 +27,10 @@ pub fn compute_dissonance_grid_3(
 
     let delta_min = min_cents - max_cents;
     let delta_max = max_cents - min_cents;
-    let nd = ((delta_max - delta_min) / step_cents).round() as usize + 1;
-    let delta_cents: Vec<f32> = (0..nd).map(|k| delta_min + k as f32 * step_cents).collect();
+    let ndelta = ((delta_max - delta_min) / step_cents).round() as usize + 1;
+    let delta_cents: Vec<f32> = (0..ndelta)
+        .map(|k| delta_min + k as f32 * step_cents)
+        .collect();
 
     // 2) Resolve timbres per pair
     let (b1, b2) = match others {
@@ -95,7 +97,7 @@ pub fn compute_dissonance_grid_3(
                 // Index Δ robustly (all points are multiples of step_cents)
                 let d = cy - cx;
                 let k = (((d - delta_min) / step_cents).round() as isize)
-                    .clamp(0, (nd - 1) as isize) as usize;
+                    .clamp(0, (ndelta - 1) as isize) as usize;
 
                 let v = lx[i] + base_y + ldelta[k];
                 row[i] = v;

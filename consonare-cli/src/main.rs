@@ -18,13 +18,17 @@ use consonare_core::{
     weighting::{WeightingConfig, run_weighting_step},
 };
 
-use crate::common::gen_target_fn;
+use crate::{
+    common::gen_target_fn,
+    util::{mean, nearest_shift, summary_min_median_max, write_csv},
+};
 
 mod common;
 #[cfg(feature = "visualise")]
 mod heatmap;
 #[cfg(feature = "visualise")]
 mod plot;
+pub mod util;
 
 /// Print only when `verbose` is true.
 macro_rules! vprintln {
@@ -56,6 +60,14 @@ struct Args {
     /// Which CSVs to export.
     #[arg(long, value_enum, default_value_t = Export::All)]
     export: Export,
+
+    /// Ablations to run (repeatable). Example: --ablate weighting --ablate masking
+    #[arg(long, value_enum, action = ArgAction::Append)]
+    ablate: Vec<Ablate>,
+
+    /// Export ablation summaries as CSV alongside other outputs.
+    #[arg(long, default_value_t = true)]
+    ablation_report: bool,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -63,6 +75,18 @@ enum Export {
     None,
     Dissonance,
     Overtones,
+    All,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum Ablate {
+    /// Disable perceptual weighting (weights=1, A-weight=0 dB)
+    Weighting,
+    /// Disable ERB masking (no partials hidden by masking)
+    Masking,
+    /// Disable ERB/CBW normalization in roughness kernel
+    ErbNorm,
+    /// Apply all of the above
     All,
 }
 
@@ -659,22 +683,184 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("No N-note tuning summary available.");
     }
 
-    Ok(())
-}
+    // ---- Step 12: Ablation runs & metrics (Outcome #9) ----
+    let do_any_ablate = !args.ablate.is_empty();
+    if do_any_ablate {
+        println!("\n== Step 12 (Ablation study) ==");
 
-fn summary_min_median_max(xs: &[f32]) -> (f32, f32, f32) {
-    if xs.is_empty() {
-        return (0.0, 0.0, 0.0);
+        // Baseline artifacts we’ll compare against
+        let baseline_named = i_result.named.clone();
+        let baseline_cents: Vec<f32> = baseline_named.iter().map(|nm| nm.at_cents).collect();
+        let baseline_depths: Vec<f32> = baseline_named.iter().map(|nm| nm.depth).collect();
+        let baseline_sharp: Vec<f32> = baseline_named.iter().map(|nm| nm.sharpness).collect();
+        let baseline_conf: Vec<f32> = baseline_named
+            .iter()
+            .filter_map(|nm| nm.best.as_ref().map(|b| b.confidence))
+            .collect();
+
+        // Utility to run one variant with toggles applied
+        let run_variant = |label: &str,
+                           ablate_weighting: bool,
+                           ablate_masking: bool,
+                           ablate_erb: bool| {
+            // Step 6 (recompute weighting with ablation flags)
+            let mut w_cfg_ab = WeightingConfig {
+                ..Default::default()
+            };
+            if ablate_masking {
+                w_cfg_ab.enable_masking = false;
+            }
+            if ablate_weighting {
+                w_cfg_ab.enable_perceptual_weighting = false;
+            }
+            let weighted_ab = run_weighting_step(&parts, &w_cfg_ab);
+
+            // Step 7 (dissonance with or without ERB normalization)
+            let mut d_cfg_ab = DissonanceConfig {
+                ..Default::default()
+            };
+            d_cfg_ab.normalize_by_cbw = !ablate_erb;
+            let d_res_ab = run_dissonance_step(&weighted_ab, None, &d_cfg_ab);
+
+            // Step 8 (naming)
+            let i_res_ab = run_interval_naming_step(&d_res_ab, &i_cfg);
+
+            // Metrics
+            let vals_ab: Vec<f32> = d_res_ab.smoothed.iter().map(|p| p.value).collect();
+            let (dmin, dmed, dmax) = summary_min_median_max(&vals_ab);
+            let named_ab = &i_res_ab.named;
+            let cents_ab: Vec<f32> = named_ab.iter().map(|nm| nm.at_cents).collect();
+            let depths_ab: Vec<f32> = named_ab.iter().map(|nm| nm.depth).collect();
+            let sharp_ab: Vec<f32> = named_ab.iter().map(|nm| nm.sharpness).collect();
+            let conf_ab: Vec<f32> = named_ab
+                .iter()
+                .filter_map(|nm| nm.best.as_ref().map(|b| b.confidence))
+                .collect();
+
+            let (mean_shift, shifts) = nearest_shift(&baseline_cents, &cents_ab);
+
+            // Print one-line summary
+            println!(
+                "{:<12} | Dmin={:.6}  Dmed={:.6}  mins={}  depth_top={:.6}  sharp_mean={:.6}  conf_mean={:.3}  Δcents_vs_base={:.2}",
+                label,
+                dmin,
+                dmed,
+                named_ab.len(),
+                depths_ab.iter().cloned().fold(0.0, f32::max),
+                mean(&sharp_ab),
+                mean(&conf_ab),
+                mean_shift
+            );
+
+            (
+                label.to_string(),
+                dmin,
+                dmed,
+                dmax,
+                named_ab.len() as i32,
+                depths_ab.into_iter().fold(0.0, f32::max),
+                mean(&sharp_ab),
+                mean(&conf_ab),
+                mean_shift,
+                shifts,
+                cents_ab,
+            )
+        };
+
+        // Determine which variants to run
+        let ablate_all = args.ablate.contains(&Ablate::All);
+        let want_w = ablate_all || args.ablate.contains(&Ablate::Weighting);
+        let want_m = ablate_all || args.ablate.contains(&Ablate::Masking);
+        let want_e = ablate_all || args.ablate.contains(&Ablate::ErbNorm);
+
+        // Always include a baseline row at top of CSV (already printed in Steps 7-8)
+        let vals_base: Vec<f32> = d_result.smoothed.iter().map(|p| p.value).collect();
+        let (bdmin, bdmed, bdmax) = summary_min_median_max(&vals_base);
+        println!(
+            "{:<12} | Dmin={:.6}  Dmed={:.6}  mins={}  depth_top={:.6}  sharp_mean={:.6}  conf_mean={:.3}  Δcents_vs_base={:.2}",
+            "baseline",
+            bdmin,
+            bdmed,
+            baseline_named.len(),
+            baseline_depths.iter().cloned().fold(0.0, f32::max),
+            mean(&baseline_sharp),
+            mean(&baseline_conf),
+            0.0
+        );
+
+        // Collect rows for CSV export
+        let mut summary_rows = Vec::<String>::new();
+        summary_rows.push("variant,Dmin,Dmed,Dmax,num_minima,top_depth,mean_sharpness,mean_confidence,mean_shift_vs_baseline".into());
+        summary_rows.push(format!(
+            "baseline,{:.6},{:.6},{:.6},{}, {:.6},{:.6},{:.6},{:.2}",
+            bdmin,
+            bdmed,
+            bdmax,
+            baseline_named.len(),
+            baseline_depths.iter().cloned().fold(0.0, f32::max),
+            mean(&baseline_sharp),
+            mean(&baseline_conf),
+            0.0
+        ));
+
+        let mut minima_rows = Vec::<String>::new();
+        minima_rows.push("variant,baseline_min_index,baseline_at_cents,nearest_shift_cents".into());
+
+        // Run requested variants (independent toggles)
+        if want_w {
+            let (name, dmin, dmed, dmax, nmins, topd, msh, mc, mshift, shifts, _cents) =
+                run_variant("no-weight", true, false, false);
+            summary_rows.push(format!(
+                "{},{:.6},{:.6},{:.6},{},{:.6},{:.6},{:.6},{:.2}",
+                name, dmin, dmed, dmax, nmins, topd, msh, mc, mshift
+            ));
+            for (k, s) in shifts.into_iter().enumerate() {
+                minima_rows.push(format!("{},{},{:.3},{:.3}", name, k, baseline_cents[k], s));
+            }
+        }
+        if want_m {
+            let (name, dmin, dmed, dmax, nmins, topd, msh, mc, mshift, shifts, _cents) =
+                run_variant("no-mask", false, true, false);
+            summary_rows.push(format!(
+                "{},{:.6},{:.6},{:.6},{},{:.6},{:.6},{:.6},{:.2}",
+                name, dmin, dmed, dmax, nmins, topd, msh, mc, mshift
+            ));
+            for (k, s) in shifts.into_iter().enumerate() {
+                minima_rows.push(format!("{},{},{:.3},{:.3}", name, k, baseline_cents[k], s));
+            }
+        }
+        if want_e {
+            let (name, dmin, dmed, dmax, nmins, topd, msh, mc, mshift, shifts, _cents) =
+                run_variant("no-erb", false, false, true);
+            summary_rows.push(format!(
+                "{},{:.6},{:.6},{:.6},{},{:.6},{:.6},{:.6},{:.2}",
+                name, dmin, dmed, dmax, nmins, topd, msh, mc, mshift
+            ));
+            for (k, s) in shifts.into_iter().enumerate() {
+                minima_rows.push(format!("{},{},{:.3},{:.3}", name, k, baseline_cents[k], s));
+            }
+        }
+
+        // CSV export
+        if args.ablation_report {
+            let summary_path = format!("{}/{}_ablation_summary.csv", out_dir.display(), out_prefix);
+            let minima_path = format!(
+                "{}/{}_ablation_minima_shift.csv",
+                out_dir.display(),
+                out_prefix
+            );
+            if let Err(e) = write_csv(&summary_path, &summary_rows) {
+                eprintln!("Could not write ablation_summary.csv: {e}");
+            } else {
+                println!("Saved ablation_summary.csv.");
+            }
+            if let Err(e) = write_csv(&minima_path, &minima_rows) {
+                eprintln!("Could not write ablation_minima_shift.csv: {e}");
+            } else {
+                println!("Saved ablation_minima_shift.csv.");
+            }
+        }
     }
-    let mut v = xs.to_vec();
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let min = v[0];
-    let max = *v.last().unwrap();
-    let mid = v.len() / 2;
-    let med = if v.len() % 2 == 1 {
-        v[mid]
-    } else {
-        0.5 * (v[mid - 1] + v[mid])
-    };
-    (min, med, max)
+
+    Ok(())
 }
