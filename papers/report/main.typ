@@ -77,7 +77,7 @@ horizons of composition and performance, there is a need to re-examine the
 assumptions embedded in traditional intervallic theory.
 
 This proposal is heavily inspired by a youtube video covering the physics of
-dissonance @the-physics-of-dissonance.
+dissonance @the_physics_of_dissonance.
 
 == Objectives
 This project seeks to address the aforementioned issues by investigating how
@@ -127,7 +127,7 @@ instruments, partials approximate integer multiples of the fundamental:
 $f_n approx n f_0$. Many instruments (e.g., stiff strings, bars, bells) are
 inharmonic: partials deviate from integer multiples.
 
-For stiff strings, inharmonicity can be parameterised by:
+For stiff strings, inharmonicity can be parameterised @fletcher_rossing_1998 by:
 $ f_n approx n f_0 sqrt(1 + B n^2) $
 where $B >= 0$ is the inharmonicity coefficient. For instruments with no simple
 closed-form (e.g., idiophones), the measured peaks $f_i$ and their magnitudes
@@ -136,8 +136,9 @@ are used directly without a parametric model.
 === Fundamental frequency estimation
 Estimating $f_0$ robustly under inharmonicity is done with time-domain and
 frequency-domain cues:
-- Short-time autocorrelation / YIN (for periodicity),
-- Spectral peak picking with quadratic interpolation (for precision),
+- Short-time autocorrelation / YIN @de2002yin (for periodicity),
+- Spectral peak picking with quadratic interpolation @smith_quadratic_2011 (for
+  precision),
 - Harmonic product spectrum or cepstrum (for corroboration).
 A consensus $f_0$ is chosen by aggregating these estimators, followed by
 stability checks over time.
@@ -146,7 +147,7 @@ stability checks over time.
 Physical amplitudes are mapped to perceptual weights $w_i$ to reflect hearing
 sensitivity and masking:
 - Equal-loudness/weighting: approximate with an equal-loudness curve
-(or an A-weighting proxy) to de-emphasise very low/high frequencies.
+(or an A-weighting @IEC61672 proxy) to de-emphasise very low/high frequencies.
 - Partial audibility/masking: down-weight partials that fall far below
 local spectral maxima or are likely masked by nearby, stronger partials.
 
@@ -159,11 +160,11 @@ coincide or separate widely. We model pairwise roughness between partials $i$
 and $j$ as:
 $ R_(i j) = w_i w_j phi(Delta f, f_m) $
 with $Delta f = |f_j − f_i|$, $f_m = min(f_i, f_j)$, and $phi$ a unimodal
-function that peaks when $Delta f$ is around a fraction of the critical
-bandwidth.
+function @sethares1993 that peaks when $Delta f$ is around a fraction of the
+critical bandwidth.
 
-We approximate the critical bandwidth with the $"ERB"$ (equivalent rectangular
-bandwidth):
+We approximate the critical bandwidth @plomp1965 with the $"ERB"$
+@GlasbergMoore1990 (equivalent rectangular bandwidth):
 $ "ERB"(f) approx 24.7 ( 4.37 f / 1000 + 1 ) , "Hz" $
 and normalise $Delta f$ by $"ERB"(f_m)$ inside $phi$. Total roughness for a
 chord is the sum over all cross-partials between its notes.
@@ -215,18 +216,19 @@ relationships when supported by the spectra.
   - Peak pick top N partials (e.g., N = 20 or until SNR < 15 dB).
   - For each partial, refine frequency and magnitude by quadratic fit to the
     log-magnitude spectrum around the bin maximum.
-  - Track partials across frames; retain time-medians (robust to outliers).
+  - Track partials across frames @mcaulay_quatieri_1986 @serra_sms_1990; retain
+    time-medians (robust to outliers).
 
 5. *Inharmonicity modelling (optional)*
-  - If spectrum resembles a stiff string, fit B by least squares on: $
-      f_n / (n f_0) approx sqrt(1 + B n^2)
-    $.
+  - If spectrum resembles a stiff string, fit B by least squares on:
+    $ f_n / (n f_0) approx sqrt(1 + B n^2) $.
   - Otherwise, skip parametric fit and keep empirical $f_i$.
 
 6. *Perceptual weighting*
   - Convert magnitudes to SPL proxies; apply equal-loudness/ A-weighting.
   - Apply within-note masking: down-weight partials $> 30–40$ dB below the
-    strongest local component or within a masker’s ERB neighbourhood.
+    strongest local component or within a masker’s ERB neighbourhood
+    @Vassilakis2001Perceptual.
   - Output per note: $(f_i, w_i)$.
 
 7. *Dissonance profile for two-note chords*
