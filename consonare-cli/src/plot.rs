@@ -1,13 +1,15 @@
 #[cfg(feature = "visualise")]
+use std::fmt::Display;
+
+#[cfg(feature = "visualise")]
 pub fn plot_dissonance(
     d_result: &consonare_core::dissonance::DissonanceResult,
     fname: &str,
+    out_dir: impl Display,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use plotters::prelude::*;
 
-    use crate::common::gen_target_fn;
-
-    let out_file = gen_target_fn(format!("{}_dissonance.png", fname));
+    let out_file = format!("{}/{}_dissonance.png", out_dir, fname);
 
     let root = BitMapBackend::new(&out_file, (1200, 900)).into_drawing_area();
     root.fill(&WHITE)?;

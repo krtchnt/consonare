@@ -18,12 +18,8 @@ use consonare_core::{
     weighting::{WeightingConfig, run_weighting_step},
 };
 
-use crate::{
-    common::gen_target_fn,
-    util::{mean, nearest_shift, summary_min_median_max, write_csv},
-};
+use crate::util::{mean, nearest_shift, summary_min_median_max, write_csv};
 
-mod common;
 #[cfg(feature = "visualise")]
 mod heatmap;
 #[cfg(feature = "visualise")]
@@ -454,7 +450,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         #[cfg(feature = "visualise")]
         {
-            if let Err(e) = plot::plot_dissonance(&d_result, out_prefix) {
+            if let Err(e) = plot::plot_dissonance(&d_result, out_prefix, out_dir.display()) {
                 eprintln!("Plotting failed: {e}");
             } else {
                 vprintln!(verbose, "Saved dissonance profile plot as dissonance.png");
@@ -560,7 +556,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 m_cfg.step_cents,
                 m_cfg.max_deltaf_over_cbw,
             );
-            if let Err(e) = plot_dissonance_surface_3(&grid, out_prefix) {
+            if let Err(e) = plot_dissonance_surface_3(&grid, out_prefix, out_dir.display()) {
                 eprintln!("Surface plotting failed: {e}");
             } else {
                 vprintln!(verbose, "Saved dissonance surface as dissonance_3.png");
@@ -624,7 +620,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // CSV export control
     if matches!(args.export, Export::All | Export::Dissonance) {
         let path = format!("{}/{}_dissonance-curve.csv", out_dir.display(), out_prefix);
-        if let Err(e) = export_dissonance_csv(gen_target_fn(path), &dsamples) {
+        if let Err(e) = export_dissonance_csv(path, &dsamples) {
             eprintln!("Could not write dissonance_curve.csv: {e}");
         } else {
             println!("Saved dissonance_curve.csv.");
@@ -632,7 +628,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if matches!(args.export, Export::All | Export::Overtones) {
         let path = format!("{}/{}_overtone-table.csv", out_dir.display(), out_prefix);
-        if let Err(e) = export_overtone_csv(gen_target_fn(path), &overtones) {
+        if let Err(e) = export_overtone_csv(path, &overtones) {
             eprintln!("Could not write overtone_table.csv: {e}");
         } else {
             println!("Saved overtone_table.csv.");

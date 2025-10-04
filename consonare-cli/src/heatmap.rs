@@ -1,3 +1,6 @@
+#[cfg(feature = "visualise")]
+use std::fmt::Display;
+
 /// A dense 2D grid of total roughness for N=3 (two free ratios vs a fixed reference).
 #[cfg(feature = "visualise")]
 #[derive(Clone, Debug)]
@@ -134,12 +137,12 @@ pub fn compute_dissonance_grid_3(
 pub fn plot_dissonance_surface_3(
     grid: &DissonanceGrid2D,
     fname: &str,
+    out_dir: impl Display,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::common::gen_target_fn;
     use image::{DynamicImage, imageops::FilterType};
     use plotters::{backend::RGBPixel, prelude::*};
 
-    let out_file = gen_target_fn(format!("{}_dissonance-3.png", fname));
+    let out_file = format!("{}/{}_dissonance-3.png", out_dir, fname);
     let (img_w, img_h) = (1200, 1000);
     let root = BitMapBackend::new(&out_file, (img_w, img_h)).into_drawing_area();
     root.fill(&WHITE)?;
