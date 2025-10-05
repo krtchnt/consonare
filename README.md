@@ -58,3 +58,11 @@ of only single note in the recording.
 ## Attributions
 - All sample recordings is owned by [MuseHub](https://www.musehub.com) from the
   (free MuseSounds)[https://www.musehub.com/free-musesounds].
+- All graphs in slides assets are plotted with [Desmos](https://www.desmos.com) with the
+  exception of the dissonance plot with [`plotters`](https://plotters-rs.github.io/).
+- All spectograms were made locally from a script by me.
+- All QR codes were generated locally via
+  [`libqrencode`](https://fukuchi.org/works/qrencode/)
+- The slide KU logo is owned by [Kasetsart University](https://ku.ac.th/th/kulogo).
+- The slide "The Physics Of Dissonance" thumbnail is owned by
+  [minutephysics](https://youtu.be/tCsl6ZcY9ag).
