@@ -57,7 +57,7 @@ of only single note in the recording.
 
 ## Attributions
 - All sample recordings is owned by [MuseHub](https://www.musehub.com) from the
-  (free MuseSounds)[https://www.musehub.com/free-musesounds].
+  [free MuseSounds](https://www.musehub.com/free-musesounds).
 - All graphs in slides assets are plotted with [Desmos](https://www.desmos.com) with the
   exception of the dissonance plot with [`plotters`](https://plotters-rs.github.io/).
 - All spectograms were made locally from a script by me.
