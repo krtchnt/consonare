@@ -29,7 +29,7 @@
     author: [Kritchanat Thanapiphatsiri],
     date: [2025-10-06],
     institution: [Department of Computer Engineering \ Kasetsart University],
-    logo: box(image("assets/KU_Logo_PNG.png"), width: 1.25cm),
+    logo: box(image("assets/KU_Logo_PNG.png"), width: 1.25cm, baseline: 60%),
   ),
 )
 
@@ -301,7 +301,7 @@ Output data should look like the following (shortened for presentation):
   caption: [Dissonance Surface of recording ($N=3$)],
 )
 
-== Evaluation of Method Performance
+== Method Performance
 
 1. Fundamental Accuracy
   - Median error = 2.91 cents; 95th percentile = 7.996 cents $->$ *Complies with
